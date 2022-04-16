@@ -17,6 +17,8 @@ wasm-bindgen-test = "0.3.18"
 
 [dependencies]
 seed = "0.8.0"
+chrono = {version= "0.4.19", features = ["serde","wasmbind"]}
+uuid = "0.8.2"
 
 [profile.release]
 lto = true

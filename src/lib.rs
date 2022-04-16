@@ -3,15 +3,22 @@
 // but some rules are too "annoying" or are not applicable for your case.)
 #![allow(clippy::wildcard_imports)]
 
-use seed::{prelude::*, *};
+use std::collections::{BTreeMap, VecDeque};
 
+use chrono::{NaiveDate, NaiveDateTime};
+use seed::{prelude::*, *};
+use uuid::Uuid;
 // ------ ------
 //     Init
 // ------ ------
 
 // `init` describes what should happen when your app started.
 fn init(_: Url, _: &mut impl Orders<Msg>) -> Model {
-    Model { counter: 0 }
+    Model {
+        current_date: chrono::offset::Local::now().date().naive_local(),
+        planned_work_periods: VecDeque::new(),
+        work_sleep_data: BTreeMap::new(),
+    }
 }
 
 // ------ ------
@@ -20,7 +27,21 @@ fn init(_: Url, _: &mut impl Orders<Msg>) -> Model {
 
 // `Model` describes our app state.
 struct Model {
-    counter: i32,
+    current_date: NaiveDate,
+    planned_work_periods: VecDeque<Period>,
+    work_sleep_data: BTreeMap<NaiveDate, WorkSleep>,
+}
+
+struct Period {
+    id: Uuid,
+    name: String,
+}
+
+struct WorkSleep {
+    target_work_count: i64,
+    actual_work_count: i64,
+    target_sleep_time: NaiveDateTime,
+    actual_sleep_time: NaiveDateTime,
 }
 
 // ------ ------
@@ -37,7 +58,7 @@ enum Msg {
 // `update` describes how to handle each `Msg`.
 fn update(msg: Msg, model: &mut Model, _: &mut impl Orders<Msg>) {
     match msg {
-        Msg::Increment => model.counter += 1,
+        Msg::Increment => model.current_date = model.current_date.succ(),
     }
 }
 
@@ -50,7 +71,10 @@ fn view(model: &Model) -> Node<Msg> {
     div![
         "This is a counter: ",
         C!["counter"],
-        button![model.counter, ev(Ev::Click, |_| Msg::Increment),],
+        button![
+            model.current_date.to_string(),
+            ev(Ev::Click, |_| Msg::Increment),
+        ],
     ]
 }
 
