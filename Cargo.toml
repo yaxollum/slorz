@@ -1,8 +1,8 @@
 [package]
-version = "0.1.0"
-name = "{{project-name}}"
-repository = "https://github.com/seed-rs/seed-quickstart"
-authors = ["{{authors}}"]
+version = "0.0.1"
+name = "slorz"
+repository = "https://github.com/yaxollum/slorz"
+authors = ["Peter Ye"]
 description = "App Description"
 categories = ["category"]
 license = "MIT"
