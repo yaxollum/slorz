@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, VecDeque};
 use chrono::{NaiveDate, NaiveDateTime};
 use seed::{prelude::*, *};
 use uuid::Uuid;
+use web_sys::HtmlInputElement;
 // ------ ------
 //     Init
 // ------ ------
@@ -15,9 +16,16 @@ use uuid::Uuid;
 // `init` describes what should happen when your app started.
 fn init(_: Url, _: &mut impl Orders<Msg>) -> Model {
     Model {
-        current_date: chrono::offset::Local::now().date().naive_local(),
-        planned_work_periods: VecDeque::new(),
-        work_sleep_data: BTreeMap::new(),
+        data: Data {
+            current_date: chrono::offset::Local::now().date().naive_local(),
+            new_task: NewTask {
+                name: String::new(),
+                quantity: "1".to_owned(),
+            },
+            planned_work_periods: VecDeque::new(),
+            work_sleep_data: BTreeMap::new(),
+        },
+        refs: Refs::default(),
     }
 }
 
@@ -26,10 +34,26 @@ fn init(_: Url, _: &mut impl Orders<Msg>) -> Model {
 // ------ ------
 
 // `Model` describes our app state.
+
 struct Model {
+    data: Data,
+    refs: Refs,
+}
+
+struct Data {
     current_date: NaiveDate,
+    new_task: NewTask,
     planned_work_periods: VecDeque<Period>,
     work_sleep_data: BTreeMap<NaiveDate, WorkSleep>,
+}
+
+#[derive(Default)]
+struct Refs {}
+
+#[derive(Debug)]
+struct NewTask {
+    name: String,
+    quantity: String,
 }
 
 struct Period {
@@ -49,16 +73,35 @@ struct WorkSleep {
 // ------ ------
 
 // (Remove the line below once any of your `Msg` variants doesn't implement `Copy`.)
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 // `Msg` describes the different events you can modify state with.
 enum Msg {
     Increment,
+    AddNewTask,
+    NewTaskNameChanged(String),
+    NewTaskQuantityChanged(String),
 }
 
 // `update` describes how to handle each `Msg`.
 fn update(msg: Msg, model: &mut Model, _: &mut impl Orders<Msg>) {
     match msg {
-        Msg::Increment => model.current_date = model.current_date.succ(),
+        Msg::Increment => model.data.current_date = model.data.current_date.succ(),
+        Msg::AddNewTask => {
+            let quantity: i64 = model.data.new_task.quantity.parse().unwrap_or(1);
+            for _ in 0..quantity {
+                let period = Period {
+                    id: Uuid::new_v4(),
+                    name: model.data.new_task.name.clone(),
+                };
+                model.data.planned_work_periods.push_back(period);
+            }
+        }
+        Msg::NewTaskNameChanged(s) => {
+            model.data.new_task.name = s;
+        }
+        Msg::NewTaskQuantityChanged(s) => {
+            model.data.new_task.quantity = s;
+        }
     }
 }
 
@@ -72,9 +115,33 @@ fn view(model: &Model) -> Node<Msg> {
         "This is a counter: ",
         C!["counter"],
         button![
-            model.current_date.to_string(),
+            model.data.current_date.to_string(),
             ev(Ev::Click, |_| Msg::Increment),
         ],
+        ul![model
+            .data
+            .planned_work_periods
+            .iter()
+            .map(|wp| li![&wp.name])],
+        input![
+            attrs! {At::Placeholder=>"Name of task"},
+            input_ev(Ev::Input, Msg::NewTaskNameChanged)
+        ],
+        raw!["&times;"],
+        input![
+            attrs! {At::Placeholder=>"Quantity",At::Value=>model.data.new_task.quantity},
+            input_ev(Ev::Input, |quantity| {
+                Msg::NewTaskQuantityChanged(quantity)
+            })
+        ],
+        input![attrs![
+            At::Type => "range",
+            At::Min => "100",
+            At::Max => "800",
+            At::Step => "50",
+            At::Value => "400",
+        ]],
+        button!["Add new task", ev(Ev::Click, |_| Msg::AddNewTask)]
     ]
 }
 
