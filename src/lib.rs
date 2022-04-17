@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{NaiveDate, NaiveTime};
 use seed::{prelude::*, *};
 use uuid::Uuid;
 use web_sys::HtmlInputElement;
@@ -23,7 +23,15 @@ fn init(_: Url, _: &mut impl Orders<Msg>) -> Model {
                 quantity: "1".to_owned(),
             },
             planned_work_periods: VecDeque::new(),
-            work_sleep_data: BTreeMap::new(),
+            default_work_sleep_goals: WorkSleepGoals {
+                work_sleep_balance: 70,
+                target_work_count: 6,
+                target_bedtime: Bedtime {
+                    time: NaiveTime::from_hms(11, 0, 0),
+                    next_day: false,
+                },
+            },
+            work_sleep_data: WorkSleepData::new(),
         },
         refs: Refs::default(),
     }
@@ -44,7 +52,8 @@ struct Data {
     current_date: NaiveDate,
     new_task: NewTask,
     planned_work_periods: VecDeque<Period>,
-    work_sleep_data: BTreeMap<NaiveDate, WorkSleep>,
+    default_work_sleep_goals: WorkSleepGoals,
+    work_sleep_data: WorkSleepData,
 }
 
 #[derive(Default)]
@@ -61,11 +70,47 @@ struct Period {
     name: String,
 }
 
-struct WorkSleep {
+#[derive(Debug)]
+struct WorkSleepData {
+    data: BTreeMap<NaiveDate, WorkSleep>,
+}
+impl WorkSleepData {
+    fn new() -> Self {
+        Self {
+            data: BTreeMap::new(),
+        }
+    }
+    fn get_mut_or_create(
+        &mut self,
+        date: &NaiveDate,
+        work_sleep_goals: &WorkSleepGoals,
+    ) -> &mut WorkSleep {
+        self.data.entry(date.clone()).or_insert(WorkSleep {
+            goals: work_sleep_goals.clone(),
+            actual_work_count: 0,
+            actual_bedtime: None,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct Bedtime {
+    time: NaiveTime,
+    next_day: bool,
+}
+
+#[derive(Clone, Debug)]
+struct WorkSleepGoals {
+    work_sleep_balance: i64,
     target_work_count: i64,
+    target_bedtime: Bedtime,
+}
+
+#[derive(Debug)]
+struct WorkSleep {
+    goals: WorkSleepGoals,
     actual_work_count: i64,
-    target_sleep_time: NaiveDateTime,
-    actual_sleep_time: NaiveDateTime,
+    actual_bedtime: Option<Bedtime>,
 }
 
 // ------ ------
@@ -78,6 +123,10 @@ struct WorkSleep {
 enum Msg {
     Increment,
     AddNewTask,
+    DeleteTask(Uuid),
+    MoveTaskToTop(Uuid),
+    MoveTaskUp(Uuid),
+    FinishedTopTask,
     NewTaskNameChanged(String),
     NewTaskQuantityChanged(String),
 }
@@ -95,6 +144,44 @@ fn update(msg: Msg, model: &mut Model, _: &mut impl Orders<Msg>) {
                 };
                 model.data.planned_work_periods.push_back(period);
             }
+        }
+        Msg::DeleteTask(id) => {
+            model.data.planned_work_periods.retain(|wp| wp.id != id);
+        }
+        Msg::MoveTaskToTop(id) => {
+            let i = model
+                .data
+                .planned_work_periods
+                .iter()
+                .position(|wp| wp.id == id);
+            if let Some(i) = i {
+                let wp = model.data.planned_work_periods.remove(i).unwrap();
+                model.data.planned_work_periods.push_front(wp);
+            }
+        }
+        Msg::MoveTaskUp(id) => {
+            let i = model
+                .data
+                .planned_work_periods
+                .iter()
+                .position(|wp| wp.id == id);
+            if let Some(i) = i {
+                if let Some(j) = i.checked_sub(1) {
+                    model.data.planned_work_periods.swap(i, j)
+                }
+            }
+        }
+        Msg::FinishedTopTask => {
+            model.data.planned_work_periods.pop_front();
+            model
+                .data
+                .work_sleep_data
+                .get_mut_or_create(
+                    &model.data.current_date,
+                    &model.data.default_work_sleep_goals,
+                )
+                .actual_work_count += 1;
+            log!(model.data.work_sleep_data);
         }
         Msg::NewTaskNameChanged(s) => {
             model.data.new_task.name = s;
@@ -118,11 +205,19 @@ fn view(model: &Model) -> Node<Msg> {
             model.data.current_date.to_string(),
             ev(Ev::Click, |_| Msg::Increment),
         ],
-        ul![model
-            .data
-            .planned_work_periods
-            .iter()
-            .map(|wp| li![&wp.name])],
+        ul![
+            if let Some(wp) = model.data.planned_work_periods.front() {
+                Some(view_first_work_period(&wp.name, wp.id))
+            } else {
+                None
+            },
+            model
+                .data
+                .planned_work_periods
+                .iter()
+                .skip(1)
+                .map(|wp| view_work_period(&wp.name, wp.id)),
+        ],
         input![
             attrs! {At::Placeholder=>"Name of task"},
             input_ev(Ev::Input, Msg::NewTaskNameChanged)
@@ -143,6 +238,25 @@ fn view(model: &Model) -> Node<Msg> {
         ]],
         button!["Add new task", ev(Ev::Click, |_| Msg::AddNewTask)]
     ]
+}
+
+fn view_first_work_period(name: &str, id: Uuid) -> Node<Msg> {
+    li![div![
+        label![name],
+        button!["Delete", ev(Ev::Click, move |_| Msg::DeleteTask(id))],
+        button!["DONE!", ev(Ev::Click, |_| Msg::FinishedTopTask)],
+    ]]
+}
+fn view_work_period(name: &str, id: Uuid) -> Node<Msg> {
+    li![div![
+        label![name],
+        button!["Delete", ev(Ev::Click, move |_| Msg::DeleteTask(id))],
+        button![
+            "Move to top",
+            ev(Ev::Click, move |_| Msg::MoveTaskToTop(id))
+        ],
+        button!["Move up", ev(Ev::Click, move |_| Msg::MoveTaskUp(id))],
+    ]]
 }
 
 // ------ ------
