@@ -1,0 +1,21 @@
+{
+  "name": "slorz",
+  "collaborators": [
+    "Peter Ye"
+  ],
+  "description": "App Description",
+  "version": "0.0.1",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yaxollum/slorz"
+  },
+  "files": [
+    "package_bg.wasm",
+    "package.js",
+    "package.d.ts"
+  ],
+  "module": "package.js",
+  "types": "package.d.ts",
+  "sideEffects": false
+}
