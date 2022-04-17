@@ -15,9 +15,10 @@ use web_sys::HtmlInputElement;
 
 // `init` describes what should happen when your app started.
 fn init(_: Url, _: &mut impl Orders<Msg>) -> Model {
+    let current_date = chrono::offset::Local::now().date().naive_local();
     Model {
         data: Data {
-            current_date: chrono::offset::Local::now().date().naive_local(),
+            current_date,
             new_task: NewTask {
                 name: String::new(),
                 quantity: "1".to_owned(),
@@ -32,7 +33,7 @@ fn init(_: Url, _: &mut impl Orders<Msg>) -> Model {
                 },
                 bedtime_pts_halflife: 30,
             },
-            work_sleep_data: WorkSleepData::new(),
+            work_sleep_data: WorkSleepData::new(current_date - Duration::days(6)),
         },
         refs: Refs::default(),
     }
@@ -73,11 +74,13 @@ struct Period {
 
 #[derive(Debug)]
 struct WorkSleepData {
+    week_start: NaiveDate,
     data: BTreeMap<NaiveDate, WorkSleep>,
 }
 impl WorkSleepData {
-    fn new() -> Self {
+    fn new(week_start: NaiveDate) -> Self {
         Self {
+            week_start,
             data: BTreeMap::new(),
         }
     }
@@ -92,31 +95,27 @@ impl WorkSleepData {
             actual_bedtime: None,
         })
     }
-    fn get_relevant(&self, date: &NaiveDate) -> VecDeque<(NaiveDate, Option<&WorkSleep>)> {
-        let mut relevant = VecDeque::new();
-        let mut current = date.clone();
+    fn get_current_week(&self) -> Vec<(NaiveDate, Option<&WorkSleep>)> {
+        let mut relevant = Vec::new();
+        let mut current = self.week_start;
+
+        for _ in 0..7 {
+            relevant.push((current, self.data.get(&current)));
+            current = current.succ();
+        }
+        relevant
+    }
+    fn set_week_start(&mut self, current_date: &NaiveDate) {
         let is_latest = if let Some((last_date, _)) = self.data.iter().rev().next() {
-            last_date <= date
+            last_date <= current_date
         } else {
             true
         };
-        if is_latest {
-            for _ in 0..7 {
-                relevant.push_front((current, self.data.get(&current)));
-                current = current.pred();
-            }
+        self.week_start = if is_latest {
+            *current_date - Duration::days(6)
         } else {
-            for _ in 0..4 {
-                relevant.push_front((current, self.data.get(&current)));
-                current = current.pred();
-            }
-            current = date.succ();
-            for _ in 0..3 {
-                relevant.push_back((current, self.data.get(&current)));
-                current = current.succ();
-            }
-        }
-        relevant
+            *current_date - Duration::days(3)
+        };
     }
 }
 
@@ -185,12 +184,17 @@ enum Msg {
     FinishedTopTask,
     NewTaskNameChanged(String),
     NewTaskQuantityChanged(String),
+    ViewNextWeek,
+    ViewPreviousWeek,
 }
 
 // `update` describes how to handle each `Msg`.
 fn update(msg: Msg, model: &mut Model, _: &mut impl Orders<Msg>) {
     match msg {
-        Msg::SetCurrentDate(date) => model.data.current_date = date,
+        Msg::SetCurrentDate(date) => {
+            model.data.current_date = date;
+            model.data.work_sleep_data.set_week_start(&date);
+        }
         Msg::AddNewTask => {
             let quantity: i64 = model.data.new_task.quantity.parse().unwrap_or(1);
             for _ in 0..quantity {
@@ -245,6 +249,12 @@ fn update(msg: Msg, model: &mut Model, _: &mut impl Orders<Msg>) {
         Msg::NewTaskQuantityChanged(s) => {
             model.data.new_task.quantity = s;
         }
+        Msg::ViewNextWeek => {
+            model.data.work_sleep_data.week_start += Duration::weeks(1);
+        }
+        Msg::ViewPreviousWeek => {
+            model.data.work_sleep_data.week_start -= Duration::weeks(1);
+        }
     }
 }
 
@@ -259,12 +269,20 @@ fn view(model: &Model) -> Node<Msg> {
 }
 
 fn view_work_sleep_data(model: &Model) -> Node<Msg> {
-    table![tr![model
-        .data
-        .work_sleep_data
-        .get_relevant(&model.data.current_date)
-        .iter()
-        .map(view_work_sleep_data_one_day)]]
+    div![
+        button!["Previous Week", ev(Ev::Click, |_| Msg::ViewPreviousWeek),],
+        button!["Next Week", ev(Ev::Click, |_| Msg::ViewNextWeek),],
+        table![tr![model
+            .data
+            .work_sleep_data
+            .get_current_week()
+            .iter()
+            .map(|(date, ws)| view_work_sleep_data_one_day(
+                *date,
+                ws,
+                *date == model.data.current_date
+            ))]]
+    ]
 }
 fn view_current_date(model: &Model) -> Node<Msg> {
     div![
@@ -303,25 +321,29 @@ fn view_current_date(model: &Model) -> Node<Msg> {
     ]
 }
 
-fn view_work_sleep_data_one_day(date_ws: &(NaiveDate, Option<&WorkSleep>)) -> Node<Msg> {
-    let (date, ws) = date_ws;
-    let date = date.clone();
+fn view_work_sleep_data_one_day(
+    date: NaiveDate,
+    ws: &Option<&WorkSleep>,
+    is_current_date: bool,
+) -> Node<Msg> {
     td![
+        IF!(is_current_date=>vec![span!["CURRENT DATE"],br![]]),
         button![
             date.to_string(),
             ev(Ev::Click, move |_| Msg::SetCurrentDate(date)),
         ],
+        br![],
         if let Some(ws) = ws {
             div![
-                span![ws.actual_work_count],
+                span![format!("Work Completed: {}", ws.actual_work_count)],
                 br![],
                 span![if let Some(actual_bedtime) = &ws.actual_bedtime {
-                    actual_bedtime.time.to_string()
+                    format!("Bedtime: {}", actual_bedtime.time.to_string())
                 } else {
                     "No bedtime data".to_owned()
                 }],
                 br![],
-                span![ws.calc_score()],
+                span![format!("Score: {}", ws.calc_score())],
             ]
         } else {
             span!["No data"]
@@ -330,7 +352,7 @@ fn view_work_sleep_data_one_day(date_ws: &(NaiveDate, Option<&WorkSleep>)) -> No
 }
 fn view_first_work_period(name: &str, id: Uuid) -> Node<Msg> {
     li![div![
-        label![name],
+        label![format!("CURRENT TASK: {}", name)],
         button!["Delete", ev(Ev::Click, move |_| Msg::DeleteTask(id))],
         button!["DONE!", ev(Ev::Click, |_| Msg::FinishedTopTask)],
     ]]
