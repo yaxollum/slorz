@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use chrono::{NaiveDate, NaiveTime};
+use chrono::{Duration, NaiveDate, NaiveTime};
 use seed::{prelude::*, *};
 use uuid::Uuid;
 use web_sys::HtmlInputElement;
@@ -30,6 +30,7 @@ fn init(_: Url, _: &mut impl Orders<Msg>) -> Model {
                     time: NaiveTime::from_hms(11, 0, 0),
                     next_day: false,
                 },
+                bedtime_pts_halflife: 30,
             },
             work_sleep_data: WorkSleepData::new(),
         },
@@ -91,6 +92,32 @@ impl WorkSleepData {
             actual_bedtime: None,
         })
     }
+    fn get_relevant(&self, date: &NaiveDate) -> VecDeque<(NaiveDate, Option<&WorkSleep>)> {
+        let mut relevant = VecDeque::new();
+        let mut current = date.clone();
+        let is_latest = if let Some((last_date, _)) = self.data.iter().rev().next() {
+            last_date <= date
+        } else {
+            true
+        };
+        if is_latest {
+            for _ in 0..7 {
+                relevant.push_front((current, self.data.get(&current)));
+                current = current.pred();
+            }
+        } else {
+            for _ in 0..4 {
+                relevant.push_front((current, self.data.get(&current)));
+                current = current.pred();
+            }
+            current = date.succ();
+            for _ in 0..3 {
+                relevant.push_back((current, self.data.get(&current)));
+                current = current.succ();
+            }
+        }
+        relevant
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -99,11 +126,23 @@ struct Bedtime {
     next_day: bool,
 }
 
+impl Bedtime {
+    fn abs_diff(&self, other: &Self) -> i64 {
+        let one_day = Duration::days(1);
+        let zero = Duration::zero();
+        (other.time - self.time + if other.next_day { one_day } else { zero }
+            - if self.next_day { one_day } else { zero })
+        .num_minutes()
+        .abs()
+    }
+}
+
 #[derive(Clone, Debug)]
 struct WorkSleepGoals {
     work_sleep_balance: i64,
     target_work_count: i64,
     target_bedtime: Bedtime,
+    bedtime_pts_halflife: i64,
 }
 
 #[derive(Debug)]
@@ -111,6 +150,23 @@ struct WorkSleep {
     goals: WorkSleepGoals,
     actual_work_count: i64,
     actual_bedtime: Option<Bedtime>,
+}
+
+impl WorkSleep {
+    fn calc_score(&self) -> i64 {
+        let work_score = (self.actual_work_count * self.goals.work_sleep_balance) as f64
+            / self.goals.target_work_count as f64;
+        let sleep_score = if let Some(actual_bedtime) = &self.actual_bedtime {
+            (100 - self.goals.work_sleep_balance) as f64
+                * (0.5f64).powf(
+                    actual_bedtime.abs_diff(&self.goals.target_bedtime) as f64
+                        / (self.goals.bedtime_pts_halflife as f64),
+                )
+        } else {
+            0.0
+        };
+        (work_score + sleep_score).round() as i64
+    }
 }
 
 // ------ ------
@@ -121,7 +177,7 @@ struct WorkSleep {
 #[derive(Clone)]
 // `Msg` describes the different events you can modify state with.
 enum Msg {
-    Increment,
+    SetCurrentDate(NaiveDate),
     AddNewTask,
     DeleteTask(Uuid),
     MoveTaskToTop(Uuid),
@@ -134,7 +190,7 @@ enum Msg {
 // `update` describes how to handle each `Msg`.
 fn update(msg: Msg, model: &mut Model, _: &mut impl Orders<Msg>) {
     match msg {
-        Msg::Increment => model.data.current_date = model.data.current_date.succ(),
+        Msg::SetCurrentDate(date) => model.data.current_date = date,
         Msg::AddNewTask => {
             let quantity: i64 = model.data.new_task.quantity.parse().unwrap_or(1);
             for _ in 0..quantity {
@@ -197,14 +253,21 @@ fn update(msg: Msg, model: &mut Model, _: &mut impl Orders<Msg>) {
 // ------ ------
 
 // `view` describes what to display.
+
 fn view(model: &Model) -> Node<Msg> {
+    div![view_work_sleep_data(model), view_current_date(model)]
+}
+
+fn view_work_sleep_data(model: &Model) -> Node<Msg> {
+    table![tr![model
+        .data
+        .work_sleep_data
+        .get_relevant(&model.data.current_date)
+        .iter()
+        .map(view_work_sleep_data_one_day)]]
+}
+fn view_current_date(model: &Model) -> Node<Msg> {
     div![
-        "This is a counter: ",
-        C!["counter"],
-        button![
-            model.data.current_date.to_string(),
-            ev(Ev::Click, |_| Msg::Increment),
-        ],
         ul![
             if let Some(wp) = model.data.planned_work_periods.front() {
                 Some(view_first_work_period(&wp.name, wp.id))
@@ -240,6 +303,31 @@ fn view(model: &Model) -> Node<Msg> {
     ]
 }
 
+fn view_work_sleep_data_one_day(date_ws: &(NaiveDate, Option<&WorkSleep>)) -> Node<Msg> {
+    let (date, ws) = date_ws;
+    let date = date.clone();
+    td![
+        button![
+            date.to_string(),
+            ev(Ev::Click, move |_| Msg::SetCurrentDate(date)),
+        ],
+        if let Some(ws) = ws {
+            div![
+                span![ws.actual_work_count],
+                br![],
+                span![if let Some(actual_bedtime) = &ws.actual_bedtime {
+                    actual_bedtime.time.to_string()
+                } else {
+                    "No bedtime data".to_owned()
+                }],
+                br![],
+                span![ws.calc_score()],
+            ]
+        } else {
+            span!["No data"]
+        }
+    ]
+}
 fn view_first_work_period(name: &str, id: Uuid) -> Node<Msg> {
     li![div![
         label![name],
